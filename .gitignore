@@ -1,7 +1,3 @@
-# Claude AI files
-CLAUDE.md
-.claude/
-
 # Go binaries
 ficout
 ficout.exe
@@ -26,6 +22,3 @@ Thumbs.db
 # Test files
 test_source/
 test_dest/
-
-# linkedin 
-linkedin.md

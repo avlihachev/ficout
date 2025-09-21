@@ -1,0 +1,31 @@
+# Claude AI files
+CLAUDE.md
+.claude/
+
+# Go binaries
+ficout
+ficout.exe
+
+# Go build cache
+.cache/
+
+# IDE files
+.vscode/
+.idea/
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+
+# Test files
+test_source/
+test_dest/
+
+# linkedin 
+linkedin.md

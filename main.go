@@ -20,6 +20,7 @@ const (
 	stateMenu state = iota
 	stateSourceSelect
 	stateDestSelect
+	stateDriveSelect
 	stateBrowseSource
 	stateBrowseDest
 	stateExtensions
@@ -45,6 +46,7 @@ type model struct {
 	err          error
 	quitting     bool
 	progressChan chan copyProgressMsg
+	driveContext string
 }
 type Config struct {
 	SourceDir  string
@@ -153,6 +155,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSourceSelect(msg)
 		case stateDestSelect:
 			return m.updateDestSelect(msg)
+		case stateDriveSelect:
+			return m.updateDriveSelect(msg)
 		case stateBrowseSource, stateBrowseDest:
 			return m.updateBrowse(msg)
 		case stateExtensions:
@@ -237,9 +241,15 @@ func (m model) updateSourceSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if m.cursor < len(shortcuts)-2 {
-			m.config.SourceDir = shortcuts[m.cursor].path
-			m.state = stateMenu
-			m.cursor = 1
+			if shortcuts[m.cursor].path == "DRIVE_SELECT" {
+				m.driveContext = "source"
+				m.state = stateDriveSelect
+				m.cursor = 0
+			} else if shortcuts[m.cursor].path != "" {
+				m.config.SourceDir = shortcuts[m.cursor].path
+				m.state = stateMenu
+				m.cursor = 1
+			}
 		} else if m.cursor == len(shortcuts)-2 {
 			m.state = stateBrowseSource
 			m.cursor = 0
@@ -267,9 +277,15 @@ func (m model) updateDestSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if m.cursor < len(shortcuts)-2 {
-			m.config.DestDir = shortcuts[m.cursor].path
-			m.state = stateMenu
-			m.cursor = 2
+			if shortcuts[m.cursor].path == "DRIVE_SELECT" {
+				m.driveContext = "dest"
+				m.state = stateDriveSelect
+				m.cursor = 0
+			} else if shortcuts[m.cursor].path != "" {
+				m.config.DestDir = shortcuts[m.cursor].path
+				m.state = stateMenu
+				m.cursor = 2
+			}
 		} else if m.cursor == len(shortcuts)-2 {
 			m.state = stateBrowseDest
 			m.cursor = 0
@@ -281,6 +297,45 @@ func (m model) updateDestSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "backspace":
 		m.state = stateMenu
 		m.cursor = 1
+	}
+	return m, nil
+}
+func (m model) updateDriveSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	drives := getAvailableDrives()
+	switch msg.String() {
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < len(drives) {
+			m.cursor++
+		}
+	case "enter":
+		if m.cursor < len(drives) {
+			m.currentPath = drives[m.cursor].path
+			m.directories = getDirectories(m.currentPath)
+			if m.driveContext == "source" {
+				m.state = stateBrowseSource
+			} else {
+				m.state = stateBrowseDest
+			}
+			m.cursor = 0
+		} else {
+			if m.driveContext == "source" {
+				m.state = stateSourceSelect
+			} else {
+				m.state = stateDestSelect
+			}
+			m.cursor = 0
+		}
+	case "backspace":
+		if m.driveContext == "source" {
+			m.state = stateSourceSelect
+		} else {
+			m.state = stateDestSelect
+		}
+		m.cursor = 0
 	}
 	return m, nil
 }
@@ -305,11 +360,11 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.state == stateBrowseSource {
 				m.config.SourceDir = m.currentPath
 				m.state = stateMenu
-				m.cursor = 1
+				m.cursor = 0
 			} else {
 				m.config.DestDir = m.currentPath
 				m.state = stateMenu
-				m.cursor = 2
+				m.cursor = 1
 			}
 		} else if len(options) > 1 && m.cursor == 1 && options[1] == "⬆️  Up" {
 			m.currentPath = filepath.Dir(m.currentPath)
@@ -606,6 +661,8 @@ func (m model) View() string {
 		s.WriteString(m.viewSourceSelect())
 	case stateDestSelect:
 		s.WriteString(m.viewDestSelect())
+	case stateDriveSelect:
+		s.WriteString(m.viewDriveSelect())
 	case stateBrowseSource, stateBrowseDest:
 		s.WriteString(m.viewBrowse())
 	case stateExtensions:
@@ -655,6 +712,32 @@ func (m model) viewSourceSelect() string {
 }
 func (m model) viewDestSelect() string {
 	return m.viewDirectorySelect("📁 Select destination folder")
+}
+func (m model) viewDriveSelect() string {
+	var s strings.Builder
+	title := "💽 Select Drive - Source"
+	if m.driveContext == "dest" {
+		title = "💽 Select Drive - Destination"
+	}
+	s.WriteString(headerStyle.Render(title))
+	s.WriteString("\n\n")
+	drives := getAvailableDrives()
+	for i, drive := range drives {
+		style := normalStyle
+		if i == m.cursor {
+			style = selectedStyle
+		}
+		s.WriteString(style.Render(drive.label))
+		s.WriteString("\n")
+	}
+	s.WriteString("\n")
+	backStyle := normalStyle
+	if m.cursor == len(drives) {
+		backStyle = selectedStyle
+	}
+	s.WriteString(backStyle.Render("🔙 Back"))
+	s.WriteString("\n")
+	return s.String()
 }
 func (m model) viewDirectorySelect(title string) string {
 	var s strings.Builder
@@ -830,10 +913,31 @@ type shortcut struct {
 	path  string
 }
 
+func getAvailableDrives() []shortcut {
+	var drives []shortcut
+	volumesDir := "/Volumes"
+	if entries, err := os.ReadDir(volumesDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+				drivePath := filepath.Join(volumesDir, entry.Name())
+				if info, err := os.Stat(drivePath); err == nil && info.IsDir() {
+					drives = append(drives, shortcut{
+						label: "💽 " + entry.Name(),
+						path:  drivePath,
+					})
+				}
+			}
+		}
+	}
+	drives = append(drives, shortcut{"💽 Root (/)", "/"})
+	return drives
+}
+
+
 func getShortcuts() []shortcut {
 	homeDir, _ := os.UserHomeDir()
 	currentDir, _ := os.Getwd()
-	return []shortcut{
+	shortcuts := []shortcut{
 		{"📁 Current folder", currentDir},
 		{"🏠 Home folder", homeDir},
 		{"🖥️  Desktop", filepath.Join(homeDir, "Desktop")},
@@ -842,9 +946,15 @@ func getShortcuts() []shortcut {
 		{"📸 Pictures", filepath.Join(homeDir, "Pictures")},
 		{"🎵 Music", filepath.Join(homeDir, "Music")},
 		{"🎬 Videos", filepath.Join(homeDir, "Videos")},
+		{"", ""},
+		{"💽 Select Drive...", "DRIVE_SELECT"},
+		{"", ""},
+	}
+	shortcuts = append(shortcuts, []shortcut{
 		{"📂 Browse folders...", ""},
 		{"🔙 Back", ""},
-	}
+	}...)
+	return shortcuts
 }
 func getDirectories(path string) []string {
 	entries, err := os.ReadDir(path)
